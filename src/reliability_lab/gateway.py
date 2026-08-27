@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 
@@ -36,12 +36,12 @@ class ReliabilityGateway:
 
         TODO(student): Implement the full request routing pipeline:
 
-        1. CACHE CHECK — if self.cache is not None:
-           - Call self.cache.get(prompt) → (cached_text, score)
+        1. CACHE CHECK â€” if self.cache is not None:
+           - Call self.cache.get(prompt) â†’ (cached_text, score)
            - If cached_text is not None, return GatewayResponse with:
              route=f"cache_hit:{score:.2f}", cache_hit=True, latency=0, cost=0
 
-        2. PROVIDER FALLBACK CHAIN — iterate self.providers in order:
+        2. PROVIDER FALLBACK CHAIN â€” iterate self.providers in order:
            - Get the circuit breaker: self.breakers[provider.name]
            - Try breaker.call(provider.complete, prompt)
            - On success:
@@ -50,12 +50,26 @@ class ReliabilityGateway:
              c. Return GatewayResponse with provider info, latency, cost
            - On ProviderError or CircuitOpenError: save error, continue to next provider
 
-        3. STATIC FALLBACK — if all providers fail:
+        3. STATIC FALLBACK â€” if all providers fail:
            - Return GatewayResponse with:
              text="The service is temporarily degraded. Please try again soon."
              route="static_fallback", error=last_error
 
-        BONUS TODO: Add cost budget tracking — if cumulative cost exceeds a threshold,
+        BONUS TODO: Add cost budget tracking â€” if cumulative cost exceeds a threshold,
         skip expensive providers and route to cache or cheaper fallback.
         """
-        raise NotImplementedError("TODO: implement complete()")
+        if self.cache is not None:
+            cached_text, score = self.cache.get(prompt)
+            if cached_text is not None:
+                return GatewayResponse(cached_text, f"cache_hit:{score:.2f}", None, True, 0.0, 0.0)
+        last_error: str | None = None
+        for index, provider in enumerate(self.providers):
+            try:
+                response: ProviderResponse = self.breakers[provider.name].call(provider.complete, prompt)
+            except (ProviderError, CircuitOpenError) as error:
+                last_error = str(error)
+                continue
+            if self.cache is not None:
+                self.cache.set(prompt, response.text, {"provider": provider.name})
+            return GatewayResponse(response.text, "primary" if index == 0 else "fallback", response.provider, False, response.latency_ms, response.estimated_cost)
+        return GatewayResponse("The service is temporarily degraded. Please try again soon.", "static_fallback", None, False, 0.0, 0.0, last_error)
